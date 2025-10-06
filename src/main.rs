@@ -20,8 +20,6 @@ struct SetupReq {
     pass: String,
 }
 
-/* ----------------------- utils ----------------------- */
-
 fn url_decode(bytes: &[u8]) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -87,7 +85,6 @@ fn start_ap(wifi: &mut EspWifi, ssid: &str) -> Result<()> {
     Ok(())
 }
 
-/* ----------------------- HTTP server ----------------------- */
 
 fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&ServerConfig::default())?;
@@ -142,7 +139,7 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
             return Ok(());
         }
 
-        println!("📝 Parsed setup -> ssid='{}', pass_len={}", ssid, pass.len());
+        println!("Parsed setup -> ssid='{}', pass_len={}", ssid, pass.len());
         let _ = tx.send(SetupReq { ssid, pass });
         let mut r = req.into_ok_response()?;
         r.write_all(b"Accepted. Trying to connect...")?;
@@ -151,8 +148,6 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
 
     Ok(server)
 }
-
-/* ----------------------- main ----------------------- */
 
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
@@ -164,7 +159,7 @@ fn main() -> Result<()> {
 
     // AP + server
     start_ap(&mut wifi, "ESP32_SETUP")?;
-    println!("📶 AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
+    println!("AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
     let (tx, rx) = channel::<SetupReq>();
     let _server = spawn_server(tx)?; // keep server alive
 
@@ -175,13 +170,13 @@ fn main() -> Result<()> {
             match connect_sta(&mut wifi, &req.ssid, &req.pass) {
                 Ok(_) => {
                     // IP already printed in wait_ip(); you’re now connected to the router.
-                    println!("✅ Connected to '{}'.", req.ssid);
+                    println!("Connected to '{}'.", req.ssid);
                 }
                 Err(e) => {
-                    eprintln!("❌ STA connect failed: {e}. Re-enabling AP for retry.");
+                    eprintln!("STA connect failed: {e}. Re-enabling AP for retry.");
                     let _ = wifi.stop();
                     if let Err(e2) = start_ap(&mut wifi, "ESP32_SETUP") {
-                        eprintln!("❌ Failed to restart AP: {e2}");
+                        eprintln!("Failed to restart AP: {e2}");
                     }
                 }
             }

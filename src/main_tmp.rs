@@ -16,7 +16,7 @@ fn wait_for_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
     loop {
         let info = wifi.sta_netif().get_ip_info()?;
         if info.ip != Ipv4Addr::new(0, 0, 0, 0) {
-            println!("✅ Got IP: {:?}", info);
+            println!("Got IP: {:?}", info);
             return Ok(());
         }
         if start.elapsed() > timeout {
@@ -38,14 +38,13 @@ fn ensure_wifi_connected(wifi: &mut EspWifi) -> Result<()> {
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
     EspLogger::initialize_default();
-    println!("📡 Init…");
+    println!("Init…");
 
     // Peripherals / eventloop / NVS
     let peripherals = Peripherals::take().context("Pas de périphériques")?;
     let sysloop = EspSystemEventLoop::take().context("Pas de sysloop")?;
     let nvs = EspDefaultNvsPartition::take().context("Pas de NVS")?;
 
-    // ⚠️ SSID 2.4 GHz uniquement sur ESP32-C3
     let ssid = "SFR_7500".try_into().map_err(|_| anyhow!("SSID invalide"))?;
     let pass = "axqj5smh95nhyk7bfn23".try_into().map_err(|_| anyhow!("MDP invalide"))?;
 
@@ -56,7 +55,7 @@ fn main() -> Result<()> {
         ..Default::default()
     }))?;
 
-    println!("🚀 Démarrage Wi-Fi…");
+    println!("Démarrage Wi-Fi…");
     wifi.start().context("Start Wi-Fi")?;
     wifi.connect().context("Connect Wi-Fi")?;
     wait_for_ip(&wifi, Duration::from_secs(20))?;
@@ -72,7 +71,7 @@ fn main() -> Result<()> {
             continue;
         }
 
-        println!("📤 POST {url}");
+        println!("POST {url}");
         // Recréer la connexion HTTP à chaque tour pour éviter un client cassé
         let conn = EspHttpConnection::new(&HttpConfiguration::default())
             .context("Création HTTP client")?;
@@ -93,10 +92,10 @@ fn main() -> Result<()> {
             Ok(resp.status())
         })() {
             Ok(status) => {
-                println!("✅ Statut: {status}");
+                println!("Statut: {status}");
             }
             Err(e) => {
-                eprintln!("❌ HTTP échec: {e}");
+                eprintln!("HTTP échec: {e}");
                 // Si DNS/connexion foire: petite pause + on retentera
                 thread::sleep(Duration::from_secs(3));
             }
