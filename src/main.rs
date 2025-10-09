@@ -106,7 +106,6 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
     })?;
 
     server.fn_handler("/setup", Method::Post, move |mut req| -> anyhow::Result<()> {
-        // Read full body (form may be larger than a single read)
         let mut body = Vec::new();
         let mut buf = [0u8; 512];
         loop {
@@ -117,7 +116,6 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
         let s = core::str::from_utf8(&body).unwrap_or("");
         println!("📡 Received /setup request: raw body = {}", s);
 
-        // Parse minimal form
         let mut ssid = String::new();
         let mut pass = String::new();
 
@@ -157,19 +155,15 @@ fn main() -> Result<()> {
     let sysloop = EspSystemEventLoop::take().context("No sysloop")?;
     let mut wifi = EspWifi::new(peripherals.modem, sysloop, None).context("Wi-Fi init")?;
 
-    // AP + server
     start_ap(&mut wifi, "ESP32_SETUP")?;
     println!("AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
     let (tx, rx) = channel::<SetupReq>();
-    let _server = spawn_server(tx)?; // keep server alive
-
-    // Wait for setup, then connect as STA
+    let _server = spawn_server(tx)?; 
     loop {
         if let Ok(req) = rx.recv() {
             println!("📥 Setup received: ssid='{}'", req.ssid);
             match connect_sta(&mut wifi, &req.ssid, &req.pass) {
                 Ok(_) => {
-                    // IP already printed in wait_ip(); you’re now connected to the router.
                     println!("Connected to '{}'.", req.ssid);
                 }
                 Err(e) => {
