@@ -91,20 +91,27 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
 
     server.fn_handler("/", Method::Get, |req| -> anyhow::Result<()> {
         let mut r = req.into_ok_response()?;
-        r.write_all(
-            br#"<!doctype html>
-<html><body>
-  <h3>ESP32 Setup</h3>
-  <form method="post" action="/setup">
-    <label>SSID <input name="ssid"></label><br>
-    <label>Password <input name="pass" type="password"></label><br>
-    <button type="submit">Save & Connect</button>
-  </form>
-</body></html>"#,
-        )?;
+        r.write_all(br#"<!doctype html><html><body>
+<h3>ESP32 Setup</h3>
+<input id=ssid placeholder=SSID>
+<input id=pass placeholder=Password type=password>
+<button onclick="send()">Connect</button>
+<p id=s></p>
+<script>
+async function send(){
+ const ssid=document.getElementById('ssid').value.trim();
+ const pass=document.getElementById('pass').value.trim();
+ if(!ssid){s.textContent='Missing SSID';return;}
+ const body=`ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`;
+ const r=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+ s.textContent=await r.text();
+}
+</script></body></html>"#)?;
         Ok(())
     })?;
 
+    let tx2 = tx.clone();
+    
     server.fn_handler("/setup", Method::Post, move |mut req| -> anyhow::Result<()> {
         let mut body = Vec::new();
         let mut buf = [0u8; 512];
@@ -114,7 +121,7 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
             body.extend_from_slice(&buf[..n]);
         }
         let s = core::str::from_utf8(&body).unwrap_or("");
-        println!("📡 Received /setup request: raw body = {}", s);
+        println!("Received /setup request: raw body = {}", s);
 
         let mut ssid = String::new();
         let mut pass = String::new();
@@ -148,6 +155,7 @@ fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
 }
 
 fn main() -> Result<()> {
+    
     esp_idf_sys::link_patches();
     EspLogger::initialize_default();
 
@@ -156,12 +164,13 @@ fn main() -> Result<()> {
     let mut wifi = EspWifi::new(peripherals.modem, sysloop, None).context("Wi-Fi init")?;
 
     start_ap(&mut wifi, "ESP32_SETUP")?;
-    println!("AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
+        println!("AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
     let (tx, rx) = channel::<SetupReq>();
     let _server = spawn_server(tx)?; 
+
     loop {
         if let Ok(req) = rx.recv() {
-            println!("📥 Setup received: ssid='{}'", req.ssid);
+            println!("Setup received: ssid='{}'", req.ssid);
             match connect_sta(&mut wifi, &req.ssid, &req.pass) {
                 Ok(_) => {
                     println!("Connected to '{}'.", req.ssid);
