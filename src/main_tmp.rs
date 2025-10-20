@@ -8,6 +8,7 @@ use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{ClientConfiguration, Configuration as WifiConfiguration, EspWifi};
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_hal::gpio::{GpioPin, Input, PullUp};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,9 @@ fn wait_for_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
         thread::sleep(Duration::from_millis(250));
     }
 }
+
+fn read_temp_gpio4():
+
 
 fn ensure_wifi_connected(wifi: &mut EspWifi) -> Result<()> {
     if wifi.is_connected().unwrap_or(false) {
