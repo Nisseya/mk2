@@ -4,6 +4,7 @@ use embedded_svc::ipv4::Ipv4Addr;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::server::{Configuration as ServerConfig, EspHttpServer};
+use esp_idf_svc::http::client::{Configuration as HttpCfg, EspHttpConnection};
 use esp_idf_svc::io::Write;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::wifi::{
@@ -14,18 +15,28 @@ use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
 use std::{thread};
 
+use esp_idf_hal::{
+    delay::Ets,
+    gpio::{PinDriver, Pull}
+};
+use dht_sensor::{dht11, DhtReading};
+
+// ================= TYPES =====================
+
 #[derive(Clone)]
 struct SetupReq {
     ssid: String,
     pass: String,
 }
 
+// ================= UTILS =====================
+
 fn url_decode(bytes: &[u8]) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => { out.push(b' '); i += 1; }
+            b'+' => out.push(b' '),
             b'%' if i + 2 < bytes.len() => {
                 let hv = |c| match c {
                     b'0'..=b'9' => Some(c - b'0'),
@@ -33,20 +44,23 @@ fn url_decode(bytes: &[u8]) -> String {
                     b'A'..=b'F' => Some(c - b'A' + 10),
                     _ => None,
                 };
-                if let (Some(h), Some(l)) = (hv(bytes[i+1]), hv(bytes[i+2])) {
+                if let (Some(h), Some(l)) = (hv(bytes[i + 1]), hv(bytes[i + 2])) {
                     out.push((h << 4) | l);
-                    i += 3;
+                    i += 2;
                 } else {
-                    out.push(bytes[i]); i += 1;
+                    out.push(bytes[i]);
                 }
             }
-            c => { out.push(c); i += 1; }
+            c => out.push(c),
         }
+        i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn wait_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
+// ================= WIFI =====================
+
+fn wait_for_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
     let start = Instant::now();
     loop {
         let info = wifi.sta_netif().get_ip_info()?;
@@ -61,6 +75,19 @@ fn wait_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
     }
 }
 
+fn start_ap(wifi: &mut EspWifi, ssid: &str) -> Result<()> {
+    wifi.set_configuration(&WifiConfiguration::AccessPoint(ApConfiguration {
+        ssid: ssid.try_into().unwrap(),
+        channel: 6,
+        auth_method: AuthMethod::None,
+        max_connections: 4,
+        ..Default::default()
+    }))?;
+    wifi.start()?;
+    println!("📡 AP '{ssid}' started → http://192.168.71.1/");
+    Ok(())
+}
+
 fn connect_sta(wifi: &mut EspWifi, ssid: &str, pass: &str) -> Result<()> {
     let _ = wifi.stop();
     wifi.set_configuration(&WifiConfiguration::Client(ClientConfiguration {
@@ -70,23 +97,12 @@ fn connect_sta(wifi: &mut EspWifi, ssid: &str, pass: &str) -> Result<()> {
     }))?;
     wifi.start()?;
     wifi.connect()?;
-    wait_ip(wifi, Duration::from_secs(20))
+    wait_for_ip(wifi, Duration::from_secs(20))
 }
 
-fn start_ap(wifi: &mut EspWifi, ssid: &str) -> Result<()> {
-    wifi.set_configuration(&WifiConfiguration::AccessPoint(ApConfiguration {
-        ssid: ssid.try_into().unwrap(),
-        channel: 6,
-        auth_method: AuthMethod::None, // set WPA2 if you want a password
-        max_connections: 4,
-        ..Default::default()
-    }))?;
-    wifi.start()?;
-    Ok(())
-}
+// ================ SERVER ===================
 
-
-fn spawn_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
+fn spawn_setup_server(tx: Sender<SetupReq>) -> Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&ServerConfig::default())?;
 
     server.fn_handler("/", Method::Get, |req| -> anyhow::Result<()> {
@@ -111,25 +127,25 @@ async function send(){
     })?;
 
     let tx2 = tx.clone();
-    
     server.fn_handler("/setup", Method::Post, move |mut req| -> anyhow::Result<()> {
         let mut body = Vec::new();
         let mut buf = [0u8; 512];
         loop {
             let n = req.read(&mut buf)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             body.extend_from_slice(&buf[..n]);
         }
-        let s = core::str::from_utf8(&body).unwrap_or("");
-        println!("Received /setup request: raw body = {}", s);
 
+        let body_str = String::from_utf8_lossy(&body);
         let mut ssid = String::new();
         let mut pass = String::new();
 
-        for pair in s.split('&') {
-            let mut it = pair.splitn(2, '=');
-            let key = it.next().unwrap_or("");
-            let val = it.next().unwrap_or("");
+        for pair in body_str.split('&') {
+            let mut kv = pair.splitn(2, '=');
+            let key = kv.next().unwrap_or("");
+            let val = kv.next().unwrap_or("");
             let val_decoded = url_decode(val.as_bytes());
             match key {
                 "ssid" => ssid = val_decoded,
@@ -138,14 +154,9 @@ async function send(){
             }
         }
 
-        if ssid.is_empty() {
-            let mut r = req.into_response(400, None, &[("Content-Type","text/plain")])?;
-            r.write_all(b"Missing ssid")?;
-            return Ok(());
-        }
+        println!("📡 Received setup: ssid='{ssid}', pass_len={}", pass.len());
+        let _ = tx2.send(SetupReq { ssid, pass });
 
-        println!("Parsed setup -> ssid='{}', pass_len={}", ssid, pass.len());
-        let _ = tx.send(SetupReq { ssid, pass });
         let mut r = req.into_ok_response()?;
         r.write_all(b"Accepted. Trying to connect...")?;
         Ok(())
@@ -154,8 +165,12 @@ async function send(){
     Ok(server)
 }
 
+// =============== MAIN ===================
+
+
+
+
 fn main() -> Result<()> {
-    
     esp_idf_sys::link_patches();
     EspLogger::initialize_default();
 
@@ -163,26 +178,66 @@ fn main() -> Result<()> {
     let sysloop = EspSystemEventLoop::take().context("No sysloop")?;
     let mut wifi = EspWifi::new(peripherals.modem, sysloop, None).context("Wi-Fi init")?;
 
+    // Mode AP + serveur de setup
     start_ap(&mut wifi, "ESP32_SETUP")?;
-        println!("AP 'ESP32_SETUP' started. Connect and open http://192.168.71.1/");
     let (tx, rx) = channel::<SetupReq>();
-    let _server = spawn_server(tx)?; 
+    let server = spawn_setup_server(tx)?;
+    println!("🖥️ Waiting for Wi-Fi credentials...");
 
+    let creds = rx.recv().expect("Channel closed");
+    drop(server);
+
+    println!("📡 Connecting to '{}'", creds.ssid);
+    connect_sta(&mut wifi, &creds.ssid, &creds.pass)?;
+
+    println!("✅ Connected! Starting ADC read loop...");
+
+
+    let mut pin = PinDriver::input_output_od(peripherals.pins.gpio4)?;
+    pin.set_pull(Pull::Up)?;
+
+    let mut delay = Ets;
+
+    let url = "http://64c0feb8116e.ngrok-free.app/ping";
     loop {
-        if let Ok(req) = rx.recv() {
-            println!("Setup received: ssid='{}'", req.ssid);
-            match connect_sta(&mut wifi, &req.ssid, &req.pass) {
-                Ok(_) => {
-                    println!("Connected to '{}'.", req.ssid);
-                }
-                Err(e) => {
-                    eprintln!("STA connect failed: {e}. Re-enabling AP for retry.");
-                    let _ = wifi.stop();
-                    if let Err(e2) = start_ap(&mut wifi, "ESP32_SETUP") {
-                        eprintln!("Failed to restart AP: {e2}");
-                    }
-                }
+        // Lecture capteur
+        //let raw: u16 = adc.read(&mut adc_pin)?;
+        //println!("🌡️ GPIO4 ADC -> raw={raw}");
+        let mut temperature_value: i8 = 0;
+        let mut humidity_value: u8 = 0;
+
+        match dht11::Reading::read(&mut delay, &mut pin) {
+            Ok(dht11::Reading { temperature, relative_humidity }) => {
+                log::info!("Temp: {} °C, Humidity: {} %", temperature, relative_humidity);
+                temperature_value = temperature;
+                humidity_value =relative_humidity;
+            }
+            Err(e) => {
+                log::warn!("Read error: {:?}", e);
             }
         }
+
+        // HTTP POST
+        let conn = EspHttpConnection::new(&HttpCfg::default())?;
+        let mut client = embedded_svc::http::client::Client::wrap(conn);
+
+        let payload = format!(
+            r#"{{"ping":true,"temperature":{},"humidity":{}}}"#,
+            temperature_value, humidity_value
+        );
+
+        let mut req = client.request(
+            Method::Post,
+            url,
+            &[("Content-Type", "application/json")],
+        )?;
+
+        req.write_all(payload.as_bytes())?;
+
+        let resp = req.submit()?;
+        println!("📨 Status: {}", resp.status());
+
+        thread::sleep(Duration::from_secs(10));
     }
 }
+
