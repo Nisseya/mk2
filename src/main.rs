@@ -59,8 +59,8 @@ fn main() -> Result<()> {
     let mut wifi = EspWifi::new(peripherals.modem, sysloop, None).context("Wi-Fi init")?;
 
     // 🔐 Hardcoded credentials
-    let ssid = "Xiaomi13Ultra";
-    let pass = "Azer1234";
+    let ssid = "TP-Link_3889";
+    let pass = "25209228";
 
     println!("📡 Connecting to Wi-Fi '{}'...", ssid);
     connect_sta(&mut wifi, ssid, pass)?;
