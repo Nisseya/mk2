@@ -37,14 +37,17 @@ fn wait_for_ip(wifi: &EspWifi, timeout: Duration) -> Result<()> {
 
 fn connect_sta(wifi: &mut EspWifi, ssid: &str, pass: &str) -> Result<()> {
     let _ = wifi.stop();
+
     wifi.set_configuration(&WifiConfiguration::Client(ClientConfiguration {
         ssid: ssid.try_into().map_err(|_| anyhow!("SSID invalide"))?,
         password: pass.try_into().map_err(|_| anyhow!("MDP invalide"))?,
         auth_method: AuthMethod::WPA2Personal,
         ..Default::default()
     }))?;
+
     wifi.start()?;
     wifi.connect()?;
+
     wait_for_ip(wifi, Duration::from_secs(20))
 }
 
@@ -52,6 +55,9 @@ fn connect_sta(wifi: &mut EspWifi, ssid: &str, pass: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
+    unsafe {
+        esp_idf_sys::uart_set_baudrate(esp_idf_sys::uart_port_t_UART_NUM_0, 9600);
+    }
     EspLogger::initialize_default();
 
     let peripherals = Peripherals::take().context("No peripherals")?;
