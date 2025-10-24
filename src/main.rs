@@ -198,11 +198,8 @@ fn main() -> Result<()> {
 
     let mut delay = Ets;
 
-    let url = "http://64c0feb8116e.ngrok-free.app/ping";
+    let url = "http://b15ca8fb2839.ngrok-free.app/ping";
     loop {
-        // Lecture capteur
-        //let raw: u16 = adc.read(&mut adc_pin)?;
-        //println!("🌡️ GPIO4 ADC -> raw={raw}");
         let mut temperature_value: i8 = 0;
         let mut humidity_value: u8 = 0;
 
