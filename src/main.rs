@@ -55,9 +55,6 @@ fn connect_sta(wifi: &mut EspWifi, ssid: &str, pass: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
-    unsafe {
-        esp_idf_sys::uart_set_baudrate(esp_idf_sys::uart_port_t_UART_NUM_0, 9600);
-    }
     EspLogger::initialize_default();
 
     let peripherals = Peripherals::take().context("No peripherals")?;
